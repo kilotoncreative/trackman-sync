@@ -1,62 +1,62 @@
 # trackman-sync
 
-Pulls your Trackman practice sessions, shot by shot, into this repo every night. Set up and run entirely from an iPhone.
+Gets your Trackman practice sessions, shot by shot, into this repo from your iPhone. After a range session: open the portal in Safari, tap Share → **Sync Trackman**. About 10 seconds.
 
 ## How it works
 
-- A headless browser on GitHub Actions opens the Trackman portal using a saved session, captures the token the portal uses, and asks Trackman's GraphQL API for activities it hasn't seen yet.
-- When the saved session has expired, it uses Trackman's **Quick Login**: it emails you the PIN shown on the login page, and you enter it in the Trackman Golf app. The run waits up to 10 minutes. (Password login is blocked by a CAPTCHA, so this script doesn't use it.)
-- Output lands in `data/`:
-  - `data/all_shots.csv`: every shot, one row each
-  - `data/sessions/<date>_<type>_<id>.csv` and `.json`: one file per session
-- Speeds are in mph and distances in yards (columns end in `_mph` / `_yd`). Angles and spin are as Trackman reports them.
-- Covered: range sessions, Virtual Range, Shot Analysis, Combine, Find My Distance, Map My Bag, Virtual Golf. Course rounds are skipped for now.
+1. The **Sync Trackman** shortcut runs `shortcut/sync_trackman.js` inside your logged-in portal.trackmangolf.com page. It uses the portal's own login (nothing stored, no password) to read your recent activities from Trackman's GraphQL API.
+2. The shortcut uploads the result to `data/inbox/` in this repo.
+3. A GitHub Action (`process_inbox.py`) turns each upload into:
+   - `data/all_shots.csv`: every shot, one row each
+   - `data/sessions/<date>_<type>_<id>.csv` and `.json`: one file per session
+
+Speeds are in mph and distances in yards (columns end in `_mph` / `_yd`). Angles and spin are as Trackman reports them. Covered: range sessions, Virtual Range, Shot Analysis, Combine, Find My Distance, Map My Bag, Virtual Golf. Course rounds are skipped. Re-syncing the same days is harmless.
+
+Why not fully automatic: Trackman's password login is behind a CAPTCHA, and its PIN login is for pairing with bays. Running inside your own logged-in Safari tab avoids both.
 
 ## One-time setup (iPhone)
 
-### 1. Create a Gmail app password
-Used to email you the PIN (and, if Trackman ever asks, to read an emailed login code).
-1. Google Account → Security → turn on 2-Step Verification if needed.
-2. myaccount.google.com/apppasswords → create one named `trackman-sync` → copy the 16-character password.
+### 1. GitHub token
+github.com → Settings → Developer settings → **Fine-grained tokens** → Generate new token:
+- Repository access: only `trackman-sync`
+- Permissions: **Contents: Read and write**
+- Copy the token.
 
-### 2. Add repo secrets
-github.com/kilotoncreative/trackman-sync/settings/secrets/actions/new
+### 2. Turn on "Run JavaScript on Webpage"
+Settings app → Apps → Shortcuts → Advanced → turn on **Allow Running Scripts**.
 
-| Name | Value |
-|---|---|
-| `IMAP_USER` | your Gmail address |
-| `IMAP_PASSWORD` | the app password from step 1 |
-| `NOTIFY_EMAIL` | optional: send PIN emails somewhere else |
+### 3. Build the shortcut
+Shortcuts app → **+** → name it **Sync Trackman**. Tap the (i) info button → turn on **Show in Share Sheet** → set it to receive **Safari web pages** only.
 
-`TRACKMAN_EMAIL` and `TRACKMAN_PASSWORD` are no longer used and can be deleted.
+Add these actions in order:
 
-### 3. First run
-Actions → Trackman sync → ⋯ → Run workflow, with **Re-download every activity** checked. Watch for the PIN email and approve it in the Trackman Golf app.
-
-## Daily use
-
-- **Automatic:** runs nightly at about 10pm Eastern.
-- **On demand:** the iOS Shortcut below.
-- **Analysis:** ask Claude to read `data/all_shots.csv` or a session file.
-- **PIN emails:** only when the saved session expires. If you miss one, the run fails; approve the next one or run the shortcut.
-- **Failures:** GitHub emails you. Ask Claude to look at the failed run.
-
-## iOS Shortcut: "Sync Trackman"
-
-First create a fine-grained GitHub token: github.com → Settings → Developer settings → Fine-grained tokens. Limit it to `trackman-sync` with **Actions: Read and write**.
-
-Shortcuts app → + → add:
-
-1. **Text**: `https://api.github.com/repos/kilotoncreative/trackman-sync/actions/workflows/sync.yml/dispatches`
-2. **Get Contents of URL** (the Text as URL)
-   - Method: **POST**
+1. **Run JavaScript on Webpage**: input is *Shortcut Input*. Delete the sample code and paste the full contents of `shortcut/sync_trackman.js`. (Open the file on github.com, tap **Raw**, select all, copy.)
+2. **Get Dictionary from Input** (input: *JavaScript Result*).
+3. **Get Dictionary Value** → key `error` from *Dictionary*.
+4. **If** *Dictionary Value* **has any value**:
+   - **Show Alert**: `Trackman sync failed: ` + *Dictionary Value*
+   - **Stop This Shortcut**
+   - **End If**
+5. **Base64 Encode** *JavaScript Result* (tap the action to set **Line Breaks: None**).
+6. **Format Date**: *Current Date*, custom format `yyyyMMdd-HHmmss`.
+7. **Get Contents of URL**:
+   - URL: `https://api.github.com/repos/kilotoncreative/trackman-sync/contents/data/inbox/` + *Formatted Date* + `.json`
+   - Method: **PUT**
    - Headers: `Authorization` = `Bearer <your token>`, `Accept` = `application/vnd.github+json`
-   - Request Body: **JSON**, one field: `ref` = `main`
-3. **Show Notification**: `Trackman sync started`
+   - Request Body: **JSON** with two text fields: `message` = `Trackman upload`, `content` = *Base64 Encoded*
+8. **Get Dictionary Value** → key `count` from the *Dictionary* in step 2.
+9. **Show Notification**: `Uploaded ` + *Dictionary Value* + ` Trackman sessions`.
 
-Optional: Shortcuts → Automation → **Leave** (your range) → run Sync Trackman. Trackman can take a few minutes to upload a session; empty ones are retried for 3 days.
+## Using it
+
+- Log in at **portal.trackmangolf.com** in Safari (once; Safari remembers you).
+- After practice: open the portal → Share → **Sync Trackman**. It pulls the last 30 days.
+- First time only: edit `var DAYS = 30;` at the top of the script to `3650`, run it once for a full backfill, then set it back.
+- Ask Claude to read `data/all_shots.csv` or a session file.
+
+If the alert says sync failed, send Claude the message. It includes what the script saw.
 
 ## Notes
 
-- Unofficial access to your own data. Personal use, low volume.
+- Unofficial access to your own data, using your own logged-in browser session. Personal use.
 - GraphQL queries adapted from [TrackPull](https://github.com/criticalberne/TrackPull) (MIT).

@@ -1,14 +1,12 @@
-name: Trackman sync
+name: Process Trackman uploads
 
+# The "Sync Trackman" iOS Shortcut uploads raw session data to data/inbox/.
+# This turns each upload into CSV files.
 on:
-  schedule:
-    - cron: "17 2 * * *"   # nightly, ~10pm Eastern
+  push:
+    paths:
+      - "data/inbox/**"
   workflow_dispatch:
-    inputs:
-      resync_all:
-        description: "Re-download every activity"
-        type: boolean
-        default: false
 
 concurrency: trackman-sync
 
@@ -16,7 +14,7 @@ permissions:
   contents: write
 
 jobs:
-  sync:
+  process:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -24,49 +22,13 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-          cache: pip
 
-      - name: Install
-        run: |
-          pip install -r requirements.txt
-          python -m playwright install --with-deps chromium
+      - run: python process_inbox.py
 
-      # Saved browser session from the last run, so most runs skip login.
-      - name: Restore Trackman session
-        uses: actions/cache/restore@v4
-        with:
-          path: .auth
-          key: trackman-auth-${{ github.run_id }}
-          restore-keys: trackman-auth-
-
-      - name: Pull new sessions
-        env:
-          IMAP_USER: ${{ secrets.IMAP_USER }}
-          IMAP_PASSWORD: ${{ secrets.IMAP_PASSWORD }}
-          NOTIFY_EMAIL: ${{ secrets.NOTIFY_EMAIL }}
-          RESYNC_ALL: ${{ inputs.resync_all }}
-        run: python trackman_sync.py
-
-      - name: Save Trackman session
-        if: success()
-        uses: actions/cache/save@v4
-        with:
-          path: .auth
-          key: trackman-auth-${{ github.run_id }}
-
-      - name: Upload login screenshots on failure
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: login-debug
-          path: debug/
-          retention-days: 3
-          if-no-files-found: ignore
-
-      - name: Commit data
+      - name: Commit results
         run: |
           git config user.name "trackman-sync"
           git config user.email "trackman-sync@users.noreply.github.com"
-          git add data
-          git diff --cached --quiet || git commit -m "Sync Trackman sessions $(date -u +%F)"
+          git add -A data
+          git diff --cached --quiet || git commit -m "Process Trackman upload $(date -u +%F)"
           git push
