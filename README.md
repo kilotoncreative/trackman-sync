@@ -4,9 +4,8 @@ Pulls your Trackman practice sessions, shot by shot, into this repo every night.
 
 ## How it works
 
-- A headless browser on GitHub Actions logs into portal.trackmangolf.com like you do. When Trackman emails a login code, it reads the code from your inbox.
-- It captures the token the portal uses, then asks Trackman's GraphQL API for activities it hasn't seen yet.
-- The browser session is saved between runs, so most nights skip the password and code entirely.
+- A headless browser on GitHub Actions opens the Trackman portal using a saved session, captures the token the portal uses, and asks Trackman's GraphQL API for activities it hasn't seen yet.
+- When the saved session has expired, it uses Trackman's **Quick Login**: it emails you the PIN shown on the login page, and you enter it in the Trackman Golf app. The run waits up to 10 minutes. (Password login is blocked by a CAPTCHA, so this script doesn't use it.)
 - Output lands in `data/`:
   - `data/all_shots.csv`: every shot, one row each
   - `data/sessions/<date>_<type>_<id>.csv` and `.json`: one file per session
@@ -16,31 +15,31 @@ Pulls your Trackman practice sessions, shot by shot, into this repo every night.
 ## One-time setup (iPhone)
 
 ### 1. Create a Gmail app password
-This lets the sync read the login code Trackman emails you.
-1. Google Account → Security → turn on 2-Step Verification if it isn't already.
-2. Go to myaccount.google.com/apppasswords, create one named `trackman-sync`, and copy the 16-character password.
-
-The app password can read your whole inbox. The script only reads messages from Trackman, and the password lives as an encrypted GitHub secret. For tighter isolation, forward Trackman emails to a separate Gmail account and use that one instead.
+Used to email you the PIN (and, if Trackman ever asks, to read an emailed login code).
+1. Google Account → Security → turn on 2-Step Verification if needed.
+2. myaccount.google.com/apppasswords → create one named `trackman-sync` → copy the 16-character password.
 
 ### 2. Add repo secrets
-Repo → Settings → Secrets and variables → Actions → New repository secret:
+github.com/kilotoncreative/trackman-sync/settings/secrets/actions/new
 
 | Name | Value |
 |---|---|
-| `TRACKMAN_EMAIL` | your Trackman login email |
-| `TRACKMAN_PASSWORD` | your Trackman password |
-| `IMAP_USER` | the Gmail address that receives Trackman codes |
+| `IMAP_USER` | your Gmail address |
 | `IMAP_PASSWORD` | the app password from step 1 |
+| `NOTIFY_EMAIL` | optional: send PIN emails somewhere else |
+
+`TRACKMAN_EMAIL` and `TRACKMAN_PASSWORD` are no longer used and can be deleted.
 
 ### 3. First run
-Actions → **Trackman sync** → Run workflow, with **Re-download every activity** checked. This backfills your history.
+Actions → Trackman sync → ⋯ → Run workflow, with **Re-download every activity** checked. Watch for the PIN email and approve it in the Trackman Golf app.
 
 ## Daily use
 
 - **Automatic:** runs nightly at about 10pm Eastern.
 - **On demand:** the iOS Shortcut below.
 - **Analysis:** ask Claude to read `data/all_shots.csv` or a session file.
-- **Failures:** GitHub emails you. Login failures attach screenshots under the run's **Artifacts** (`login-debug`). Ask Claude to look at the failed run.
+- **PIN emails:** only when the saved session expires. If you miss one, the run fails; approve the next one or run the shortcut.
+- **Failures:** GitHub emails you. Ask Claude to look at the failed run.
 
 ## iOS Shortcut: "Sync Trackman"
 

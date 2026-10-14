@@ -11,9 +11,11 @@ On any failure a screenshot and page HTML are written to debug/.
 """
 import email
 import imaplib
+import smtplib
 import os
 import re
 import time
+from email.message import EmailMessage
 from email.utils import parsedate_to_datetime
 from pathlib import Path
 from urllib.parse import urlparse
@@ -146,58 +148,63 @@ def _find_code(msg):
     return None
 
 
-LOGIN_TRAFFIC = []
+PIN_WAIT_SECONDS = int(os.environ.get("PIN_WAIT_SECONDS", "600"))
+
+
+def send_pin_email(pin):
+    """Email the Quick Login PIN to yourself from your own Gmail."""
+    user = os.environ["IMAP_USER"]
+    to = os.environ.get("NOTIFY_EMAIL") or user
+    msg = EmailMessage()
+    msg["From"], msg["To"] = user, to
+    msg["Subject"] = f"Trackman PIN {pin}: approve in the Trackman Golf app"
+    msg.set_content(
+        f"Your nightly Trackman sync needs a fresh login.\n\n"
+        f"Open the Trackman Golf app, choose Quick Login (scan QR / enter PIN), and enter:\n\n"
+        f"    {pin}\n\n"
+        f"The sync waits about {PIN_WAIT_SECONDS // 60} minutes. If you miss it, run the Sync Trackman shortcut later.")
+    with smtplib.SMTP_SSL(os.environ.get("SMTP_HOST", "smtp.gmail.com"), 465) as smtp:
+        smtp.login(user, os.environ["IMAP_PASSWORD"])
+        smtp.send_message(msg)
+
+
+def _read_pin(page):
+    m = re.search(r"PIN\s*(\d{4,8})", page.inner_text("body"))
+    return m.group(1) if m else None
+
+
+def _enter_email_code(page, code_field, since):
+    print("Waiting for the emailed login code...")
+    code = fetch_email_code(since)
+    boxes = page.locator(CODE_SEL)
+    if boxes.count() >= len(code):  # one box per digit
+        boxes.first.click()
+        page.keyboard.type(code, delay=80)
+    else:
+        code_field.fill(code)
+    _submit(page, code_field)
 
 
 def _do_login(page):
-    print("Logging in to Trackman...")
-    page.on("response", lambda r: _host(r.url) == "login.trackmangolf.com" and r.request.method != "GET"
-            and LOGIN_TRAFFIC.append(f"{r.request.method} {urlparse(r.url).path} -> {r.status}"))
-    email_field = _visible(page, EMAIL_SEL, 15000)
-    if not email_field:
-        raise LoginError("Could not find the email field on the login page.")
-    email_field.fill(os.environ["TRACKMAN_EMAIL"])
-
-    pw = _visible(page, PASSWORD_SEL, 1500)
-    if not pw:  # email and password on separate steps
-        _submit(page, email_field)
-        pw = _visible(page, PASSWORD_SEL, 10000)
-    if pw:
-        pw.fill(os.environ["TRACKMAN_PASSWORD"])
-        code_requested_at = time.time()
-        _submit(page, pw)
-    else:
-        code_requested_at = time.time()  # passwordless: email step sends the code
-
-    # Either we land back on the portal, or a code prompt appears.
-    error_sel = ".validation-summary-errors, .field-validation-error, .alert-danger, [role=alert]"
-    for _ in range(30):
-        page.wait_for_timeout(1000)
+    """Log in with Trackman's Quick Login: you approve a PIN in the Trackman Golf app."""
+    print("Session expired. Starting Quick Login...")
+    sent_pin, started = None, time.time()
+    while time.time() - started < PIN_WAIT_SECONDS:
         if _on_portal(page):
+            print("Quick Login approved.")
             return
-        code_field = _visible(page, CODE_SEL, 1000)
-        if code_field:
-            print("Waiting for the emailed login code...")
-            code = fetch_email_code(code_requested_at)
-            boxes = page.locator(CODE_SEL)
-            if boxes.count() >= len(code):  # one box per digit
-                boxes.first.click()
-                page.keyboard.type(code, delay=80)
-            else:
-                code_field.fill(code)
-            remember = page.locator("input[type=checkbox]").first
-            if remember.count() and remember.is_visible() and not remember.is_checked():
-                remember.check()
-            _submit(page, code_field)
-            page.wait_for_url(lambda u: _host(u) == "portal.trackmangolf.com", timeout=30000)
-            return
-        err = page.locator(error_sel).first
-        LOGIN_TRAFFIC[:] = LOGIN_TRAFFIC[-10:]
-        if err.count() and err.is_visible() and err.inner_text().strip():
-            raise LoginError(f"Trackman login error: {err.inner_text().strip()[:200]}")
-    filled = page.evaluate("() => [...document.querySelectorAll('input')].map(i => (i.name||i.type)+':'+(i.value?'filled':'empty'))")
-    raise LoginError("Login did not complete (no code prompt and no redirect). "
-                     f"Fields: {filled}. Form posts after click: {LOGIN_TRAFFIC or 'none'}")
+        if _on_login(page):
+            code_field = _visible(page, CODE_SEL, 500)
+            if code_field and not _read_pin(page):
+                _enter_email_code(page, code_field, started)
+                continue
+            pin = _read_pin(page)
+            if pin and pin != sent_pin:
+                send_pin_email(pin)
+                print(f"Emailed Quick Login PIN (ending {pin[-2:]}). Waiting for approval...")
+                sent_pin = pin
+        page.wait_for_timeout(3000)
+    raise LoginError(f"Quick Login PIN was not approved within {PIN_WAIT_SECONDS // 60} minutes.")
 
 
 def get_graphql_headers():

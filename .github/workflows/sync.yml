@@ -41,10 +41,9 @@ jobs:
 
       - name: Pull new sessions
         env:
-          TRACKMAN_EMAIL: ${{ secrets.TRACKMAN_EMAIL }}
-          TRACKMAN_PASSWORD: ${{ secrets.TRACKMAN_PASSWORD }}
           IMAP_USER: ${{ secrets.IMAP_USER }}
           IMAP_PASSWORD: ${{ secrets.IMAP_PASSWORD }}
+          NOTIFY_EMAIL: ${{ secrets.NOTIFY_EMAIL }}
           RESYNC_ALL: ${{ inputs.resync_all }}
         run: python trackman_sync.py
 
