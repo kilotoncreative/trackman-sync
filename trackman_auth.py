@@ -16,6 +16,7 @@ import re
 import time
 from email.utils import parsedate_to_datetime
 from pathlib import Path
+from urllib.parse import urlparse
 
 from playwright.sync_api import TimeoutError as PWTimeout
 from playwright.sync_api import sync_playwright
@@ -37,6 +38,18 @@ FORWARD_HEADERS = ("authorization", "accept", "content-type")
 
 class LoginError(Exception):
     pass
+
+
+def _host(url):
+    return urlparse(url).hostname or ""
+
+
+def _on_portal(page):
+    return _host(page.url) == "portal.trackmangolf.com"
+
+
+def _on_login(page):
+    return _host(page.url) == "login.trackmangolf.com"
 
 
 def _forwardable(name):
@@ -152,8 +165,10 @@ def _do_login(page):
         code_requested_at = time.time()  # passwordless: email step sends the code
 
     # Either we land back on the portal, or a code prompt appears.
+    error_sel = ".validation-summary-errors, .field-validation-error, .alert-danger, [role=alert]"
     for _ in range(30):
-        if "portal.trackmangolf.com" in page.url:
+        page.wait_for_timeout(1000)
+        if _on_portal(page):
             return
         code_field = _visible(page, CODE_SEL, 1000)
         if code_field:
@@ -169,8 +184,11 @@ def _do_login(page):
             if remember.count() and remember.is_visible() and not remember.is_checked():
                 remember.check()
             _submit(page, code_field)
-            page.wait_for_url(re.compile(r"portal\.trackmangolf\.com"), timeout=30000)
+            page.wait_for_url(lambda u: _host(u) == "portal.trackmangolf.com", timeout=30000)
             return
+        err = page.locator(error_sel).first
+        if err.count() and err.is_visible() and err.inner_text().strip():
+            raise LoginError(f"Trackman login error: {err.inner_text().strip()[:200]}")
     raise LoginError("Login did not complete (no code prompt and no redirect).")
 
 
@@ -198,16 +216,16 @@ def get_graphql_headers():
             for i in range(20):  # up to ~20s for either a token or a login page
                 if captured:
                     break
-                if i == 8 and "login.trackmangolf.com" not in page.url:
+                if i == 8 and not _on_login(page):
                     # Portal may show a landing page with a login button instead of redirecting.
                     link = page.locator("a:has-text('Log in'), button:has-text('Log in'), "
                                         "a:has-text('Sign in'), button:has-text('Sign in')").first
                     if link.count() and link.is_visible():
                         link.click()
                         page.wait_for_timeout(2000)
-                if "login.trackmangolf.com" in page.url:
+                if _on_login(page):
                     _do_login(page)
-                    if "/player/activities" not in page.url:
+                    if urlparse(page.url).path != "/player/activities":
                         page.goto(PORTAL_URL, wait_until="domcontentloaded")
                 page.wait_for_timeout(1000)
             if not captured:
