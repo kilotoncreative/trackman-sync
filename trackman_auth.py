@@ -188,7 +188,10 @@ def _enter_email_code(page, code_field, since):
 def _do_login(page):
     """Log in with Trackman's Quick Login: you approve a PIN in the Trackman Golf app."""
     print("Session expired. Starting Quick Login...")
-    sent_pin, started = None, time.time()
+    sent_pin, started, traffic, pins = None, time.time(), [], []
+    page.on("response", lambda r: _host(r.url).endswith("trackmangolf.com") and r.request.resource_type in ("xhr", "fetch", "document", "eventsource")
+            and traffic.append(f"{int(time.time() - started)}s {r.request.method} {_host(r.url)}{urlparse(r.url).path} -> {r.status}"))
+    page.on("websocket", lambda ws: traffic.append(f"{int(time.time() - started)}s WS {ws.url[:120]}"))
     while time.time() - started < PIN_WAIT_SECONDS:
         if _on_portal(page):
             print("Quick Login approved.")
@@ -203,8 +206,22 @@ def _do_login(page):
                 send_pin_email(pin)
                 print(f"Emailed Quick Login PIN (ending {pin[-2:]}). Waiting for approval...")
                 sent_pin = pin
+                pins.append(f"{int(time.time() - started)}s {pin}")
         page.wait_for_timeout(3000)
+    annotate("Quick Login traffic", "PINs emailed: " + ", ".join(pins) + "\n" + "\n".join(_dedupe(traffic)[-60:]))
     raise LoginError(f"Quick Login PIN was not approved within {PIN_WAIT_SECONDS // 60} minutes.")
+
+
+def _dedupe(lines):
+    out = []
+    for line in lines:
+        key = line.split(" ", 1)[1]
+        if out and out[-1].split(" ", 1)[1].rsplit(" x", 1)[0] == key:
+            n = int(out[-1].rsplit(" x", 1)[1]) + 1 if " x" in out[-1] else 2
+            out[-1] = out[-1].rsplit(" x", 1)[0] + f" x{n}"
+        else:
+            out.append(line)
+    return out
 
 
 def get_graphql_headers():
