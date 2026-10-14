@@ -146,8 +146,13 @@ def _find_code(msg):
     return None
 
 
+LOGIN_TRAFFIC = []
+
+
 def _do_login(page):
     print("Logging in to Trackman...")
+    page.on("response", lambda r: _host(r.url) == "login.trackmangolf.com" and r.request.method != "GET"
+            and LOGIN_TRAFFIC.append(f"{r.request.method} {urlparse(r.url).path} -> {r.status}"))
     email_field = _visible(page, EMAIL_SEL, 15000)
     if not email_field:
         raise LoginError("Could not find the email field on the login page.")
@@ -187,9 +192,12 @@ def _do_login(page):
             page.wait_for_url(lambda u: _host(u) == "portal.trackmangolf.com", timeout=30000)
             return
         err = page.locator(error_sel).first
+        LOGIN_TRAFFIC[:] = LOGIN_TRAFFIC[-10:]
         if err.count() and err.is_visible() and err.inner_text().strip():
             raise LoginError(f"Trackman login error: {err.inner_text().strip()[:200]}")
-    raise LoginError("Login did not complete (no code prompt and no redirect).")
+    filled = page.evaluate("() => [...document.querySelectorAll('input')].map(i => (i.name||i.type)+':'+(i.value?'filled':'empty'))")
+    raise LoginError("Login did not complete (no code prompt and no redirect). "
+                     f"Fields: {filled}. Form posts after click: {LOGIN_TRAFFIC or 'none'}")
 
 
 def get_graphql_headers():

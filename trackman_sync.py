@@ -187,6 +187,10 @@ def write_csv(path, rows, append=False):
 
 
 def main():
+    missing = [n for n in ("TRACKMAN_EMAIL", "TRACKMAN_PASSWORD", "IMAP_PASSWORD") if not os.environ.get(n)]
+    if missing:
+        annotate("Missing secrets", "Add these repo secrets: " + ", ".join(missing))
+        sys.exit(1)
     lookback = os.environ.get("RESYNC_ALL") == "true"
 
     DATA_DIR.mkdir(exist_ok=True)
