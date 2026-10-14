@@ -44,12 +44,31 @@ def _forwardable(name):
     return n in FORWARD_HEADERS or n.startswith(("x-", "tm-", "apollographql-")) or "trackman" in n
 
 
+def annotate(title, text):
+    """Emit a GitHub Actions error annotation (readable via the API, unlike logs)."""
+    text = str(text).replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+    print(f"::error title={title}::{text[:3500]}", flush=True)
+
+
+def _describe(page):
+    """Short text description of the current page, without any typed values."""
+    fields = page.evaluate("""() => [...document.querySelectorAll('input,button,select,a[role=button]')]
+      .filter(e => e.offsetParent !== null)
+      .map(e => [e.tagName.toLowerCase(), e.type||'', e.name||'', e.id||'',
+                 e.getAttribute('autocomplete')||'', e.getAttribute('inputmode')||'',
+                 (e.innerText||e.value&&e.type==='submit'&&e.value||'').trim().slice(0,40)].join('|'))
+      .slice(0, 40)""")
+    body = page.inner_text("body")[:1200]
+    return f"URL: {page.url}\nTitle: {page.title()}\nVisible controls:\n" + "\n".join(fields) + f"\n\nPage text:\n{body}"
+
+
 def _dump(page, tag):
     DEBUG_DIR.mkdir(exist_ok=True)
     try:
         page.screenshot(path=str(DEBUG_DIR / f"{tag}.png"), full_page=True)
         (DEBUG_DIR / f"{tag}.html").write_text(page.content())
         (DEBUG_DIR / f"{tag}.url.txt").write_text(page.url)
+        annotate("Login page state", _describe(page))
     except Exception as e:  # noqa: BLE001
         print(f"debug dump failed: {e}")
 

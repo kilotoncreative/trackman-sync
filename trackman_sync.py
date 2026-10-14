@@ -17,7 +17,7 @@ from pathlib import Path
 
 import requests
 
-from trackman_auth import get_graphql_headers
+from trackman_auth import annotate, get_graphql_headers
 
 GRAPHQL_URL = "https://api.trackmangolf.com/graphql"
 DATA_DIR = Path(os.environ.get("DATA_DIR", "data"))
@@ -199,7 +199,11 @@ def main():
         "Origin": "https://portal.trackmangolf.com",
         "Referer": "https://portal.trackmangolf.com/",
     })
-    session.headers.update(get_graphql_headers())
+    try:
+        session.headers.update(get_graphql_headers())
+    except Exception as e:
+        annotate("Login failed", f"{type(e).__name__}: {e}")
+        raise
 
     activities = [a for a in list_activities(session) if a.get("__typename") in SHOT_TYPES]
     todo = [a for a in activities if lookback or a["id"] not in state["synced"]]
