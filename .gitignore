@@ -1,2 +1,3 @@
-.new_refresh_token
+.auth/
+debug/
 __pycache__/

@@ -24,22 +24,45 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+          cache: pip
 
-      - run: pip install -r requirements.txt
+      - name: Install
+        run: |
+          pip install -r requirements.txt
+          python -m playwright install --with-deps chromium
+
+      # Saved browser session from the last run, so most runs skip login.
+      - name: Restore Trackman session
+        uses: actions/cache/restore@v4
+        with:
+          path: .auth
+          key: trackman-auth-${{ github.run_id }}
+          restore-keys: trackman-auth-
 
       - name: Pull new sessions
         env:
-          TRACKMAN_CLIENT_ID: ${{ secrets.TRACKMAN_CLIENT_ID }}
-          TRACKMAN_REFRESH_TOKEN: ${{ secrets.TRACKMAN_REFRESH_TOKEN }}
+          TRACKMAN_EMAIL: ${{ secrets.TRACKMAN_EMAIL }}
+          TRACKMAN_PASSWORD: ${{ secrets.TRACKMAN_PASSWORD }}
+          IMAP_USER: ${{ secrets.IMAP_USER }}
+          IMAP_PASSWORD: ${{ secrets.IMAP_PASSWORD }}
           RESYNC_ALL: ${{ inputs.resync_all }}
         run: python trackman_sync.py
 
-      # Runs even if the pull failed, so a rotated token is never lost.
-      - name: Save rotated refresh token
-        if: always()
-        env:
-          GH_SECRETS_PAT: ${{ secrets.GH_SECRETS_PAT }}
-        run: python save_refresh_token.py
+      - name: Save Trackman session
+        if: success()
+        uses: actions/cache/save@v4
+        with:
+          path: .auth
+          key: trackman-auth-${{ github.run_id }}
+
+      - name: Upload login screenshots on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: login-debug
+          path: debug/
+          retention-days: 3
+          if-no-files-found: ignore
 
       - name: Commit data
         run: |
